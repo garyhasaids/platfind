@@ -177,6 +177,147 @@ def screenshot_live_results(live_results, screenshot_dir, timeout_ms=15000):
             print("failed")
 
 
+def generate_html_report(live_results, screenshot_dir, report_path):
+    """
+    Write an HTML gallery page showing each live domain's screenshot,
+    domain name, HTTP status, and a link to the live URL.
+    """
+    import base64
+    from datetime import datetime
+
+    def embed_image(path):
+        try:
+            with open(path, "rb") as f:
+                data = base64.b64encode(f.read()).decode("ascii")
+            return f"data:image/png;base64,{data}"
+        except Exception:
+            return ""
+
+    cards_html = ""
+    for res in sorted(live_results, key=lambda r: r["domain"]):
+        domain = res["domain"]
+        url = res["final_url"] or res["scheme_tried"] or f"http://{domain}"
+        status = res["http_status"] or "—"
+        shot_path = res.get("screenshot_path")
+
+        if shot_path and os.path.exists(shot_path):
+            img_src = embed_image(shot_path)
+            img_tag = f'<img src="{img_src}" alt="{domain}" loading="lazy">'
+        else:
+            img_tag = '<div class="no-shot">No screenshot</div>'
+
+        status_class = "ok" if isinstance(status, int) and status < 400 else "warn"
+
+        cards_html += f"""
+        <article class="card">
+            <a href="{url}" target="_blank" rel="noopener">{img_tag}</a>
+            <div class="card-body">
+                <h2><a href="{url}" target="_blank" rel="noopener">{domain}</a></h2>
+                <span class="badge {status_class}">HTTP {status}</span>
+                <p class="url">{url}</p>
+            </div>
+        </article>"""
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    count = len(live_results)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Domain Report</title>
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #0f1117;
+    color: #e0e0e0;
+    padding: 2rem;
+  }}
+  header {{
+    margin-bottom: 2rem;
+    border-bottom: 1px solid #2a2d3a;
+    padding-bottom: 1rem;
+  }}
+  header h1 {{ font-size: 1.6rem; color: #fff; }}
+  header p {{ color: #888; margin-top: 0.4rem; font-size: 0.9rem; }}
+  .gallery {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.5rem;
+  }}
+  .card {{
+    background: #1a1d2e;
+    border: 1px solid #2a2d3a;
+    border-radius: 10px;
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }}
+  .card:hover {{
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }}
+  .card a img {{
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
+    object-position: top;
+    display: block;
+  }}
+  .no-shot {{
+    width: 100%;
+    height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #252836;
+    color: #555;
+    font-size: 0.85rem;
+  }}
+  .card-body {{ padding: 0.9rem 1rem 1rem; }}
+  .card-body h2 {{ font-size: 1rem; margin-bottom: 0.4rem; }}
+  .card-body h2 a {{ color: #7eb6ff; text-decoration: none; }}
+  .card-body h2 a:hover {{ text-decoration: underline; }}
+  .badge {{
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }}
+  .badge.ok {{ background: #1a3a2a; color: #4caf7d; }}
+  .badge.warn {{ background: #3a2a1a; color: #f0a050; }}
+  .url {{
+    font-size: 0.75rem;
+    color: #666;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }}
+  .empty {{
+    text-align: center;
+    color: #555;
+    margin-top: 4rem;
+    font-size: 1.1rem;
+  }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Live Domain Report</h1>
+  <p>{count} live domain(s) found &mdash; generated {timestamp}</p>
+</header>
+{"<div class='gallery'>" + cards_html + "</div>" if count else "<p class='empty'>No live domains found.</p>"}
+</body>
+</html>"""
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"\nHTML report saved -> {report_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list-only", action="store_true",
@@ -191,6 +332,10 @@ def main():
                         help="Skip taking screenshots of live domains")
     parser.add_argument("--screenshot-dir", type=str, default="screenshots",
                         help="Directory to save screenshots (default: screenshots/)")
+    parser.add_argument("--report", type=str, default="report.html",
+                        help="Path for the HTML gallery report (default: report.html)")
+    parser.add_argument("--no-report", action="store_true",
+                        help="Skip generating the HTML report")
     args = parser.parse_args()
 
     candidates = generate_candidates()
@@ -231,6 +376,9 @@ def main():
         screenshot_live_results(live_results, args.screenshot_dir)
     elif not live_results:
         print("\nNo live domains found — nothing to screenshot.")
+
+    if not args.no_report:
+        generate_html_report(live_results, args.screenshot_dir, args.report)
 
     if args.out:
         fieldnames = ["domain", "dns_resolves", "http_status", "final_url",
